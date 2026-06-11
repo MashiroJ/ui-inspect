@@ -1,9 +1,13 @@
 import { resolveProjectRoot } from '../project-root.js';
+import { ensureDaemon } from '../../daemon.js';
+import { ensureProjectIntegration } from '../../project-setup.js';
 export async function startUiInspectHandler(args, daemonUrl) {
     const project = typeof args === 'object' && args !== null && 'project' in args
         ? args.project
         : undefined;
     const projectRoot = resolveProjectRoot(project);
-    return { ok: true, projectRoot };
+    const daemon = await ensureDaemon({ daemonUrl, project: projectRoot });
+    const integration = ensureProjectIntegration({ project: projectRoot });
+    return { ok: true, projectRoot, daemon, integration };
 }
 //# sourceMappingURL=start.js.map

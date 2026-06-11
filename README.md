@@ -77,7 +77,7 @@ ui-inspect 不绑定某个编辑器或模型。只要 agent 支持 MCP stdio，�
 | Rsbuild | `@ui-inspect/rsbuild-plugin` |
 | 协议类型 | `@ui-inspect/protocol` |
 
-Vite 项目可以自动 patch；Next.js、Webpack、Rspack、Rsbuild 会给出接入指引或按支持能力配置。
+Vite 项目可以自动安装并 patch；Next.js 会尝试自动安装 `@ui-inspect/next`，但 layout/API route 文件仍给出手动接入指引；Webpack、Rspack、Rsbuild 会给出插件接入指引。
 
 ## 快速开始
 
@@ -134,7 +134,7 @@ start ui-inspect
 enable ui-inspect
 ```
 
-agent 会先调用 `start_ui_inspect`，再调用 `wait_for_frontend_request`。浏览器页面出现 Diana 面板后，你就可以选择元素、补充要求并 Send。
+agent 会先调用 `start_ui_inspect` 来启动或校验本地 daemon，并检查项目接入状态；再调用 `wait_for_frontend_request`。如果前端集成已经完成，浏览器页面出现 Diana 面板后，你就可以选择元素、补充要求并 Send。
 
 ## 手动 MCP 配置
 
@@ -236,6 +236,8 @@ agent 收到 `wait_for_frontend_request` 的结果后，通常应该优先看这
 
 | 字段 | 用途 |
 | --- | --- |
+| `elementSnapshotSummary` | Cursor 风格的元素快照：ELEMENT、PATH、ATTRIBUTES、COMPUTED STYLES、POSITION、INNER TEXT 和 HTML |
+| `domSearchHints` | 从元素和祖先节点提取的高价值 class/id/text 搜索线索，帮助 agent 快速定位源码 |
 | `contextSummary` | 当前选择或任务的快速摘要 |
 | `targetsSummary` | 批量模式下每个目标的选择信息和备注 |
 | `sourceHintSummary` | 可能相关的源码文件、行号和置信度 |

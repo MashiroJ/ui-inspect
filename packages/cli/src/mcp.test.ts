@@ -1,8 +1,13 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { UiInspectSelection, UiInspectSession } from '@ui-inspect/protocol';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { getMcpToolDefinition, latestFrontendRequest, normalizeCompleteFrontendRequestArgs, resolveProjectRoot, compactFrontendRequestResult, waitForFrontendRequest } from './mcp.js';
+import { startUiInspectHandler } from './mcp/handlers/start.js';
+import { getVersion } from './version.js';
 
 describe('complete_frontend_request tool', () => {
   it('exposes the required completion-and-wait schema', () => {
@@ -75,9 +80,62 @@ describe('complete_frontend_request tool', () => {
   });
 });
 
+describe('start_ui_inspect tool', () => {
+  it('ensures the daemon and returns project integration status', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'ui-inspect-mcp-start-test-'));
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'plain-project', version: '0.0.0' }, null, 2));
+    const server = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ ok: true, name: 'ui-inspect', version: getVersion() }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address() as AddressInfo;
+      const result = await startUiInspectHandler(
+        { project },
+        `http://127.0.0.1:${address.port}`,
+      ) as { ok: boolean; projectRoot: string; integration: { projectType: string; missing: string[] } };
+
+      expect(result.ok).toBe(true);
+      expect(result.projectRoot).toBe(project);
+      expect(result.integration.projectType).toBe('unknown');
+      expect(result.integration.missing).toEqual(['project-integration']);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('waitForFrontendRequest flow', () => {
   it('polls daemon sessions, claims the task, and returns a compact request', async () => {
-    const selection = makeSelection({ source: { root: '/project', file: null, line: null, column: null } });
+    const selection = makeSelection({
+      source: { root: '/project', file: null, line: null, column: null },
+      dom: {
+        selector: 'div#app > div.wrong-question-page > div.explain-content',
+        tagName: 'div',
+        id: '',
+        className: 'explain-content el-table__cell',
+        text: '错因解释',
+        outerHtml: '<div class="explain-content">错因解释</div>',
+        rect: { x: 800, y: 276, width: 691, height: 353 },
+        styles: { color: 'rgb(144, 147, 153)', fontSize: '14px', display: 'block', position: 'static' },
+      },
+      context: {
+        attributes: { class: 'explain-content el-table__cell', 'data-v-f2081870': '' },
+        parentChain: [{
+          tagName: 'div',
+          selector: 'div.wrong-question-page',
+          attributes: { class: 'wrong-question-page zvue-main' },
+        }],
+      },
+    });
     const session = makeSession({ selection, targets: [{ id: selection.id, note: 'make it clearer', selection }] });
     const seenStatuses: string[] = [];
     const server = createServer((req, res) => {
@@ -113,6 +171,15 @@ describe('waitForFrontendRequest flow', () => {
       expect(result.requestId).toBe('selection:selection-1');
       expect(result.nextCursor).toEqual({ afterRequestId: 'selection:selection-1' });
       expect(result.targetsSummary).toContain('make it clearer');
+      expect(result.elementSnapshotSummary).toContain('ELEMENT\n<div class="explain-content el-table__cell">');
+      expect(result.elementSnapshotSummary).toContain('PATH\ndiv#app > div.wrong-question-page > div.explain-content');
+      expect(result.elementSnapshotSummary).toContain('HTML\n<div class="explain-content">错因解释</div>');
+      expect(result.domSearchHints).toEqual(expect.arrayContaining([
+        expect.objectContaining({ token: 'explain-content', reason: 'selected element class', priority: 'high' }),
+        expect.objectContaining({ token: 'wrong-question-page', reason: 'ancestor class from DOM path', priority: 'medium' }),
+      ]));
+      expect(result.domSearchHints.some((hint: { token: string }) => hint.token === 'el-table__cell')).toBe(false);
+      expect(result.domSearchHints.some((hint: { token: string }) => hint.token === 'zvue-main')).toBe(false);
       expect(result.source).toBeUndefined();
       expect(seenStatuses).toEqual(['claimed']);
     } finally {
@@ -818,6 +885,8 @@ describe('compactFrontendRequestResult', () => {
       targetCount: 2,
       source: { file: 'src/App.vue', root: '/project', startLine: 40, endLine: 50, totalLines: 100, content: 'big source' },
       contextSummary: 'Element: App · div#app · hello',
+      elementSnapshotSummary: 'ELEMENT\n<div id="app">',
+      domSearchHints: [{ token: 'app-shell', reason: 'selected element class', priority: 'high', suggestedSearch: 'app-shell' }],
       targetsSummary: '1. target1\n2. target2',
       sourceHintSummary: 'hint1',
       runtimeSummary: 'runtime diag',
@@ -835,6 +904,10 @@ describe('compactFrontendRequestResult', () => {
     expect(sel.sourceFile).toBe('src/App.vue');
     expect(compact.targetCount).toBe(2);
     expect(compact.contextSummary).toBe('Element: App · div#app · hello');
+    expect(compact.elementSnapshotSummary).toBe('ELEMENT\n<div id="app">');
+    expect(compact.domSearchHints).toEqual([
+      { token: 'app-shell', reason: 'selected element class', priority: 'high', suggestedSearch: 'app-shell' },
+    ]);
     expect(compact.targetsSummary).toBe('1. target1\n2. target2');
   });
 

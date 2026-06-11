@@ -99,47 +99,59 @@ describe('ensureProjectIntegration', () => {
   });
 
   it('returns App Router guidance for Next.js without patching user files', () => {
-    const project = tempProject({ dependencies: { next: '^16.0.0' } });
+    const project = tempProject({ packageManager: 'npm@10.0.0', dependencies: { next: '^16.0.0' } });
     writeFile(project, 'app/layout.tsx', 'export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }');
+    const previousPath = installFakePackageManager(project, 'npm');
 
-    const result = ensureProjectIntegration({ project });
+    try {
+      const result = ensureProjectIntegration({ project });
 
-    expect(result.projectType).toBe('next');
-    expect(result.router).toBe('app');
-    expect(result.installed).toBe(false);
-    expect(result.patched).toBe(false);
-    expect(result.alreadyConfigured).toBe(false);
-    expect(result.missing).toEqual(['@ui-inspect/next', 'UiInspectScript', 'diana-route']);
-    expect(result.nextSteps.join('\n')).toContain('app/layout.tsx');
-    expect(result.nextSteps.join('\n')).toContain('snippet "appRoute"');
-    expect(result.snippets).toEqual({
-      install: expect.stringContaining('pnpm add -D @ui-inspect/next@'),
-      appLayout: expect.stringContaining("import { UiInspectScript } from '@ui-inspect/next';"),
-      appRoute: "export { GET } from '@ui-inspect/next/app';\n",
-    });
-    expect(readFileSync(join(project, 'app/layout.tsx'), 'utf8')).not.toContain('UiInspectScript');
+      expect(result.projectType).toBe('next');
+      expect(result.router).toBe('app');
+      expect(result.installed).toBe(true);
+      expect(result.patched).toBe(false);
+      expect(result.alreadyConfigured).toBe(false);
+      expect(result.missing).toEqual(['UiInspectScript', 'diana-route']);
+      expect(result.nextSteps.join('\n')).toContain('app/layout.tsx');
+      expect(result.nextSteps.join('\n')).toContain('snippet "appRoute"');
+      expect(result.nextSteps.join('\n')).not.toContain('Install package @ui-inspect/next');
+      expect(result.snippets).toEqual({
+        install: expect.stringContaining('pnpm add -D @ui-inspect/next@'),
+        appLayout: expect.stringContaining("import { UiInspectScript } from '@ui-inspect/next';"),
+        appRoute: "export { GET } from '@ui-inspect/next/app';\n",
+      });
+      expect(readFileSync(join(project, 'app/layout.tsx'), 'utf8')).not.toContain('UiInspectScript');
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 
   it('returns Pages Router guidance for Next.js without patching user files', () => {
-    const project = tempProject({ dependencies: { next: '^16.0.0' } });
+    const project = tempProject({ packageManager: 'npm@10.0.0', dependencies: { next: '^16.0.0' } });
     writeFile(project, 'pages/_app.tsx', 'export default function App({ Component, pageProps }) { return <Component {...pageProps} />; }');
+    const previousPath = installFakePackageManager(project, 'npm');
 
-    const result = ensureProjectIntegration({ project });
+    try {
+      const result = ensureProjectIntegration({ project });
 
-    expect(result.projectType).toBe('next');
-    expect(result.router).toBe('pages');
-    expect(result.installed).toBe(false);
-    expect(result.patched).toBe(false);
-    expect(result.alreadyConfigured).toBe(false);
-    expect(result.missing).toEqual(['@ui-inspect/next', 'UiInspectScript', 'diana-route']);
-    expect(result.nextSteps.join('\n')).toContain('pages/_app.tsx');
-    expect(result.nextSteps.join('\n')).toContain('snippet "pagesApi"');
-    expect(result.snippets).toEqual({
-      install: expect.stringContaining('pnpm add -D @ui-inspect/next@'),
-      pagesApp: expect.stringContaining("import { UiInspectScript } from '@ui-inspect/next';"),
-      pagesApi: "export { dianaHandler as default } from '@ui-inspect/next/pages';\n",
-    });
-    expect(readFileSync(join(project, 'pages/_app.tsx'), 'utf8')).not.toContain('UiInspectScript');
+      expect(result.projectType).toBe('next');
+      expect(result.router).toBe('pages');
+      expect(result.installed).toBe(true);
+      expect(result.patched).toBe(false);
+      expect(result.alreadyConfigured).toBe(false);
+      expect(result.missing).toEqual(['UiInspectScript', 'diana-route']);
+      expect(result.nextSteps.join('\n')).toContain('pages/_app.tsx');
+      expect(result.nextSteps.join('\n')).toContain('snippet "pagesApi"');
+      expect(result.nextSteps.join('\n')).not.toContain('Install package @ui-inspect/next');
+      expect(result.snippets).toEqual({
+        install: expect.stringContaining('pnpm add -D @ui-inspect/next@'),
+        pagesApp: expect.stringContaining("import { UiInspectScript } from '@ui-inspect/next';"),
+        pagesApi: "export { dianaHandler as default } from '@ui-inspect/next/pages';\n",
+      });
+      expect(readFileSync(join(project, 'pages/_app.tsx'), 'utf8')).not.toContain('UiInspectScript');
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 
   it('returns manual guidance for unknown projects', () => {
@@ -327,6 +339,16 @@ function tempProject(packageJson: Record<string, unknown>): string {
   roots.push(project);
   writeFileSync(join(project, 'package.json'), JSON.stringify(packageJson, null, 2));
   return project;
+}
+
+function installFakePackageManager(project: string, command: string): string | undefined {
+  const bin = join(project, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, command), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(bin, command), 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath ?? ''}`;
+  return previousPath;
 }
 
 function writeFile(project: string, name: string, content: string): void {

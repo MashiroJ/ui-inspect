@@ -13,6 +13,8 @@ export function compactFrontendRequestResult(result: any): any {
     selection: result.selection,
     targetCount: result.targetCount,
     contextSummary: result.contextSummary,
+    elementSnapshotSummary: result.elementSnapshotSummary,
+    domSearchHints: result.domSearchHints,
     targetsSummary: result.targetsSummary,
     sourceHintSummary: result.sourceHintSummary,
     runtimeSummary: result.runtimeSummary,

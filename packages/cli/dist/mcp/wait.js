@@ -181,6 +181,8 @@ export async function buildFrontendRequestResult(options) {
         } : undefined,
         diagnostics,
         contextSummary: summarizeRequestContext(selection, message),
+        elementSnapshotSummary: summarizeElementSnapshot(selection),
+        domSearchHints: buildDomSearchHints(selection, targets),
         targetsSummary: summarizeRequestTargets(targets),
         sourceHintSummary: summarizeSourceHints(selection, targets),
         runtimeSummary: summarizeRuntimeDiagnostics(diagnostics),
@@ -270,6 +272,131 @@ function summarizeRequestTargets(targets) {
         const note = clean(target.note) ? ` — ${clean(target.note)}` : '';
         return `${index + 1}. ${title.slice(0, 100)}${source}${note}`;
     }).join('\n');
+}
+function summarizeElementSnapshot(selection) {
+    if (!selection?.dom)
+        return 'No selected element.';
+    const dom = selection.dom;
+    const context = selection.context;
+    const rect = dom.rect;
+    const lines = [];
+    lines.push('ELEMENT');
+    lines.push(elementLabel(selection));
+    lines.push('');
+    lines.push('PATH');
+    lines.push(dom.selector || '(none)');
+    lines.push('');
+    lines.push('ATTRIBUTES');
+    const attributes = context?.attributes ?? attributesFromDom(selection);
+    const attributeLines = Object.entries(attributes).slice(0, 12).map(([key, value]) => `${key}: ${clean(value)}`);
+    lines.push(...(attributeLines.length ? attributeLines : ['(none)']));
+    lines.push('');
+    lines.push('COMPUTED STYLES');
+    const styles = context?.computedStyles ?? dom.styles ?? {};
+    const styleLines = styleSnapshot(styles);
+    lines.push(...(styleLines.length ? styleLines : ['(none)']));
+    lines.push('');
+    lines.push('POSITION & SIZE');
+    lines.push(rect
+        ? `top=${round(rect.y)}px, left=${round(rect.x)}px, width=${round(rect.width)}px, height=${round(rect.height)}px`
+        : '(none)');
+    lines.push('');
+    lines.push('INNER TEXT');
+    lines.push(clean(dom.text || context?.accessibleName || '').slice(0, 500) || '(empty)');
+    lines.push('');
+    lines.push('HTML');
+    lines.push(clean(dom.outerHtml).slice(0, 1200) || '(none)');
+    return lines.join('\n');
+}
+function buildDomSearchHints(selection, targets) {
+    const seen = new Set();
+    const hints = [];
+    const add = (token, reason, priority) => {
+        const normalized = normalizeSearchToken(token);
+        if (!normalized || seen.has(normalized) || isLowValueDomToken(normalized))
+            return;
+        seen.add(normalized);
+        hints.push({
+            token: normalized,
+            reason,
+            priority,
+            suggestedSearch: normalized,
+        });
+    };
+    const selections = [
+        selection,
+        ...targets.map((target) => target.selection),
+    ].filter(Boolean);
+    for (const item of selections) {
+        for (const cls of classesFromSelection(item)) {
+            add(cls, item === selection ? 'selected element class' : 'target element class', 'high');
+        }
+        for (const ancestor of item.context?.parentChain ?? []) {
+            for (const cls of classesFromSummary(ancestor)) {
+                add(cls, 'ancestor class from DOM path', 'medium');
+            }
+        }
+        if (item.dom?.id)
+            add(item.dom.id, 'selected element id', 'high');
+        const text = clean(item.dom?.text || item.context?.accessibleName || '');
+        if (text && text.length >= 4 && text.length <= 80) {
+            add(text, 'visible element text', 'medium');
+        }
+    }
+    return hints.slice(0, 12);
+}
+function elementLabel(selection) {
+    const dom = selection.dom;
+    const attrs = [];
+    if (dom.id)
+        attrs.push(`id="${dom.id}"`);
+    if (dom.className)
+        attrs.push(`class="${clean(dom.className).slice(0, 160)}"`);
+    return `<${dom.tagName || 'element'}${attrs.length ? ` ${attrs.join(' ')}` : ''}>`;
+}
+function attributesFromDom(selection) {
+    const attrs = {};
+    if (selection.dom?.id)
+        attrs.id = selection.dom.id;
+    if (selection.dom?.className)
+        attrs.class = selection.dom.className;
+    return attrs;
+}
+function styleSnapshot(styles) {
+    const keys = ['color', 'backgroundColor', 'fontSize', 'fontFamily', 'display', 'position', 'width', 'height', 'padding', 'margin', 'border', 'borderRadius'];
+    return keys
+        .map((key) => [key, styles[key]])
+        .filter(([, value]) => value != null && String(value).trim() !== '')
+        .map(([key, value]) => `${key}: ${clean(value)}`);
+}
+function classesFromSelection(selection) {
+    return splitClassName(selection.dom?.className);
+}
+function classesFromSummary(summary) {
+    const classes = splitClassName(summary.attributes?.class ?? '');
+    const selectorClasses = [...String(summary.selector ?? '').matchAll(/\.([A-Za-z_-][\w-]*)/g)].map((match) => match[1]);
+    return [...classes, ...selectorClasses];
+}
+function splitClassName(className) {
+    return String(className ?? '').split(/\s+/).filter(Boolean);
+}
+function normalizeSearchToken(token) {
+    return clean(token).replace(/^#|\./, '').trim();
+}
+function isLowValueDomToken(token) {
+    const value = token.toLowerCase();
+    if (value.length < 3 || value.length > 120)
+        return true;
+    if (/^\d+$/.test(value))
+        return true;
+    if (/^(div|span|main|body|html|cell|panel|layout|container|content|wrapper|inner|item|row|col|left|right|top|bottom|active|disabled)$/.test(value))
+        return true;
+    if (/^(el-|ant-|van-|ivu-|arco-|n-|q-|v-|zvue-|cursor-|data-v-)/.test(value))
+        return true;
+    return false;
+}
+function round(value) {
+    return Math.round(value * 100) / 100;
 }
 function summarizeSourceHints(selection, targets) {
     const hints = [

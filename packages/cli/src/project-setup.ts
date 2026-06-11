@@ -59,7 +59,6 @@ export interface UpdateProjectIntegrationResult {
 const require = createRequire(import.meta.url);
 const VITE_CONFIG_CANDIDATES = ['vite.config.ts', 'vite.config.mts', 'vite.config.js', 'vite.config.mjs', 'vite.config.cjs', 'vite.config.cts'];
 const PACKAGE_VERSION = getVersion();
-const VITE_PLUGIN_SPEC = `@ui-inspect/vite-plugin@${PACKAGE_VERSION}`;
 const INTEGRATION_PACKAGES: Record<Exclude<ProjectKind, 'unknown'>, string> = {
   vite: '@ui-inspect/vite-plugin',
   next: '@ui-inspect/next',
@@ -112,7 +111,7 @@ export function ensureProjectIntegration({ project }: EnsureProjectIntegrationOp
     }
 
     if (!hasProjectDependency(project, '@ui-inspect/vite-plugin')) {
-      const installed = installProjectPackages(project);
+      const installed = installProjectPackage(project, INTEGRATION_PACKAGES.vite);
       result.installed = installed;
       if (!installed) result.warnings.push('failed to install @ui-inspect/vite-plugin into the project');
     }
@@ -128,7 +127,7 @@ export function ensureProjectIntegration({ project }: EnsureProjectIntegrationOp
   if (patch.warning) result.warnings.push(patch.warning);
 
   if (!result.alreadyConfigured && !hasProjectDependency(project, '@ui-inspect/vite-plugin')) {
-    const installed = installProjectPackages(project);
+    const installed = installProjectPackage(project, INTEGRATION_PACKAGES.vite);
     result.installed = installed;
     if (!installed) result.warnings.push('failed to install @ui-inspect/vite-plugin into the project');
   }
@@ -232,15 +231,26 @@ function ensureNextIntegration(
   result.packageName = INTEGRATION_PACKAGES.next;
   result.snippets = flattenNextSnippets(integration);
   result.missing = integration.missing;
-  result.alreadyConfigured = integration.missing.length === 0;
+
+  if (result.missing.includes(INTEGRATION_PACKAGES.next)) {
+    const installed = installProjectPackage(project, INTEGRATION_PACKAGES.next);
+    result.installed = installed;
+    if (installed) {
+      result.missing = result.missing.filter((item) => item !== INTEGRATION_PACKAGES.next);
+    } else {
+      result.warnings.push(`failed to install ${INTEGRATION_PACKAGES.next} into the project`);
+    }
+  }
+
+  result.alreadyConfigured = result.missing.length === 0;
 
   if (result.missing.length === 0) {
     result.nextSteps = ['Start or keep using your Next.js dev server, open the target page, then select an element with ui-inspect.'];
     return result;
   }
 
-  result.nextSteps = nextIntegrationSteps(router, integration);
-  result.warnings.push('Next.js projects are not patched automatically; add the ui-inspect integration manually.');
+  result.nextSteps = nextIntegrationSteps(router, integration, result.missing);
+  result.warnings.push('Next.js project files are not patched automatically; add UiInspectScript and the Diana route manually.');
   return result;
 }
 
@@ -295,10 +305,10 @@ function hasDependency(packageJson: ProjectPackageJson | null, name: string): bo
   return Boolean(packageJson?.dependencies?.[name] || packageJson?.devDependencies?.[name]);
 }
 
-function installProjectPackages(project: string): boolean {
+function installProjectPackage(project: string, packageName: string): boolean {
   const pluginSpec = process.env.UI_INSPECT_PROJECT_INSTALL_SOURCE === 'local'
-    ? packageRoot('@ui-inspect/vite-plugin')
-    : VITE_PLUGIN_SPEC;
+    ? packageRoot(packageName)
+    : `${packageName}@${PACKAGE_VERSION}`;
   if (!pluginSpec) return false;
   const manager = detectPackageManager(project);
   const command = manager;
@@ -428,31 +438,37 @@ function findViteConfig(project: string): string | null {
   return null;
 }
 
-function nextIntegrationSteps(router: NextRouterKind, integration: NextIntegrationInspection): string[] {
+function nextIntegrationSteps(
+  router: NextRouterKind,
+  integration: NextIntegrationInspection,
+  missing: string[] = integration.missing,
+): string[] {
   const install = `Install package ${INTEGRATION_PACKAGES.next}: pnpm add -D @ui-inspect/next@${PACKAGE_VERSION}`;
-  const missing = `Missing: ${integration.missing.join(', ')}`;
+  const steps = [`Missing: ${missing.join(', ')}`];
+  if (missing.includes(INTEGRATION_PACKAGES.next)) steps.push(install);
   if (router === 'app') {
-    return [
-      missing,
-      install,
-      'In app/layout.tsx or src/app/layout.tsx, render <UiInspectScript /> in the root layout body. Copy snippet "appLayout" if you need a starting point.',
-      'Create app/api/ui-inspect/diana/route.ts or src/app/api/ui-inspect/diana/route.ts for Diana. Copy snippet "appRoute".',
-    ];
+    if (missing.includes('UiInspectScript')) {
+      steps.push('In app/layout.tsx or src/app/layout.tsx, render <UiInspectScript /> in the root layout body. Copy snippet "appLayout" if you need a starting point.');
+    }
+    if (missing.includes('diana-route')) {
+      steps.push('Create app/api/ui-inspect/diana/route.ts or src/app/api/ui-inspect/diana/route.ts for Diana. Copy snippet "appRoute".');
+    }
+    return steps;
   }
   if (router === 'pages') {
-    return [
-      missing,
-      install,
-      'In pages/_app.tsx or src/pages/_app.tsx, render <UiInspectScript /> alongside the page component. Copy snippet "pagesApp" if you need a starting point.',
-      'Create pages/api/ui-inspect/diana.ts or src/pages/api/ui-inspect/diana.ts for Diana. Copy snippet "pagesApi".',
-    ];
+    if (missing.includes('UiInspectScript')) {
+      steps.push('In pages/_app.tsx or src/pages/_app.tsx, render <UiInspectScript /> alongside the page component. Copy snippet "pagesApp" if you need a starting point.');
+    }
+    if (missing.includes('diana-route')) {
+      steps.push('Create pages/api/ui-inspect/diana.ts or src/pages/api/ui-inspect/diana.ts for Diana. Copy snippet "pagesApi".');
+    }
+    return steps;
   }
-  return [
-    missing,
-    install,
-    'For App Router, add <UiInspectScript /> to the root layout and add the Diana route handler from "@ui-inspect/next/app". Copy snippets "appLayout" and "appRoute".',
-    'For Pages Router, add <UiInspectScript /> to _app and add the Diana API handler from "@ui-inspect/next/pages". Copy snippets "pagesApp" and "pagesApi".',
-  ];
+  if (missing.includes('UiInspectScript') || missing.includes('diana-route')) {
+    steps.push('For App Router, add <UiInspectScript /> to the root layout and add the Diana route handler from "@ui-inspect/next/app". Copy snippets "appLayout" and "appRoute".');
+    steps.push('For Pages Router, add <UiInspectScript /> to _app and add the Diana API handler from "@ui-inspect/next/pages". Copy snippets "pagesApp" and "pagesApi".');
+  }
+  return steps;
 }
 
 function bundlerIntegrationSteps(kind: Exclude<ProjectKind, 'vite' | 'next' | 'unknown'>, packageName: string): string[] {
